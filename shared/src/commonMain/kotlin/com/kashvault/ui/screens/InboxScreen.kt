@@ -127,6 +127,7 @@ object InboxScreen : Screen {
         var pasteText by remember { mutableStateOf("") }
         var chipFilter by remember { mutableStateOf("all") }
         var showFilters by remember { mutableStateOf(false) }
+        var showDismissAllConfirmation by remember { mutableStateOf(false) }
         var adjusting by remember { mutableStateOf<InboxItem?>(null) }
         val clicks = rememberSingleClick()
 
@@ -149,7 +150,6 @@ object InboxScreen : Screen {
         val chipOptions = listOf(
             "all" to "All",
             "pending" to "Pending",
-            "review" to "Needs review",
             "upi" to "UPI",
             "food" to "Food",
             "grocery" to "Grocery",
@@ -222,6 +222,19 @@ object InboxScreen : Screen {
                             activeCount = if (chipFilter != "all") 1 else 0,
                             onClick = { showFilters = true },
                         )
+                    }
+                }
+
+                if (state.inboxItems.isNotEmpty()) {
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            TextButton(onClick = { showDismissAllConfirmation = true }) {
+                                Text("Dismiss all")
+                            }
+                        }
                     }
                 }
 
@@ -301,6 +314,25 @@ object InboxScreen : Screen {
             }
         }
 
+        if (showDismissAllConfirmation) {
+            AlertDialog(
+                onDismissRequest = { showDismissAllConfirmation = false },
+                title = { Text("Dismiss all inbox items?") },
+                text = { Text("This will dismiss all ${state.inboxItems.size} pending items.") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            vm.dismissAllInbox()
+                            showDismissAllConfirmation = false
+                        },
+                    ) { Text("Dismiss all") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDismissAllConfirmation = false }) { Text("Cancel") }
+                },
+            )
+        }
+
         adjusting?.let { item ->
             val cardMatch = vm.inboxCardBillMatch(item)
             val dueMatch = if (cardMatch == null) {
@@ -377,13 +409,8 @@ private fun SwipeInboxRow(
             when (value) {
                 SwipeToDismissBoxValue.StartToEnd -> {
                     platformHapticTick()
-                    if (item.needsReview) {
-                        onOpen()
-                        false
-                    } else {
-                        acceptAction()
-                        true
-                    }
+                    acceptAction()
+                    true
                 }
                 SwipeToDismissBoxValue.EndToStart -> {
                     platformHapticTick()
@@ -549,13 +576,6 @@ private fun CompactInboxCard(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        if (item.needsReview) {
-                            SoftChip(
-                                "Needs review",
-                                container = MaterialTheme.colorScheme.errorContainer,
-                                content = MaterialTheme.colorScheme.onErrorContainer,
-                            )
-                        }
                         SoftChip(
                             categoryName,
                             container = MaterialTheme.colorScheme.primaryContainer,
@@ -583,15 +603,7 @@ private fun CompactInboxCard(
                         )
                     }
                 }
-                if (item.needsReview) {
-                    Text(
-                        "Needs review",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                } else {
-                    MoneyText(item.amount, type = item.type, style = MaterialTheme.typography.titleSmall)
-                }
+                MoneyText(item.amount, type = item.type, style = MaterialTheme.typography.titleSmall)
             }
         }
     }
@@ -623,7 +635,7 @@ private fun InboxAdjustSheet(
     var selectedType by remember(item.id) { mutableStateOf(item.type) }
     var amountText by remember(item.id) {
         mutableStateOf(
-            if (item.needsReview) "" else if (item.amount % 1.0 == 0.0) {
+            if (item.amount % 1.0 == 0.0) {
                 item.amount.toLong().toString()
             } else {
                 item.amount.toString()
@@ -673,7 +685,7 @@ private fun InboxAdjustSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                if (item.needsReview) "Needs review · ${item.sender.ifBlank { "Message" }}" else item.sender.ifBlank { "Payment" },
+                item.sender.ifBlank { "Payment" },
                 style = MaterialTheme.typography.titleLarge,
             )
             

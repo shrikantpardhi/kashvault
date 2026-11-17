@@ -131,9 +131,9 @@ class InboxParserTest {
     }
 
     @Test
-    fun unparsedInboxItemsRequireAValidAmountAndAreNotLearnedWhenDismissed() {
-        val reviewItem = InboxItem(
-            id = "review",
+    fun dismissedInboxItemsAreNotLearned() {
+        val pendingItem = InboxItem(
+            id = "pending",
             capturedAt = "2026-08-19T10:00:00Z",
             channel = Constants.INBOX_SMS,
             sender = "HDFCBK",
@@ -145,18 +145,11 @@ class InboxParserTest {
             note = null,
             status = Constants.INBOX_PENDING,
             fingerprint = inboxFingerprint("Payment at SWIGGY"),
-            needsReview = true,
         )
 
-        assertNull(resolvedInboxAmount(reviewItem, null))
-        assertNull(resolvedInboxAmount(reviewItem, 0.0))
-        assertEquals(249.0, resolvedInboxAmount(reviewItem, 249.0))
-        assertFalse(shouldLearnFromInboxItem(reviewItem))
-        assertFalse(shouldLearnFromInboxItem(reviewItem.copy(status = Constants.INBOX_DISMISSED)))
-        assertTrue(shouldLearnFromInboxItem(reviewItem.copy(status = Constants.INBOX_ACCEPTED)))
-        assertTrue(inboxItemDedupKeys(reviewItem).none { it.startsWith("sem:") })
-        assertTrue(shouldRecoverUnparsedInboxMessage(null, alreadyHasInboxItem = false))
-        assertFalse(shouldRecoverUnparsedInboxMessage(null, alreadyHasInboxItem = true))
+        assertFalse(shouldLearnFromInboxItem(pendingItem.copy(status = Constants.INBOX_DISMISSED)))
+        assertTrue(shouldLearnFromInboxItem(pendingItem.copy(status = Constants.INBOX_ACCEPTED)))
+        assertTrue(inboxItemDedupKeys(pendingItem).any { it.startsWith("sem:") })
     }
 
     @Test
