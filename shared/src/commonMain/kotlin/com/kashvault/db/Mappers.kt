@@ -60,6 +60,7 @@ fun Inbox_items.toDomain(): InboxItem = InboxItem(
     fingerprint = fingerprint,
     matchedCategoryTag = matched_category_tag,
     matchedSourceTag = matched_source_tag,
+    needsReview = needs_review == 1L,
 )
 
 fun Borrow_lend.toDomain(): BorrowLend = BorrowLend(

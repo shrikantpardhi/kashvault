@@ -22,6 +22,7 @@ The repository includes some early iOS source, but it does not currently configu
 - Monthly budgets
 - Category Studio (emoji, color, SMS/UPI tags)
 - SMS / UPI inbox (per bank or card; accept into Magic Log)
+- Optional biometric-only app lock
 - Liquidity forecast (local runway + optional Gemini)
 - Google Sign-In
 - Standard SQLite vault backup and restore (Google Drive appDataFolder + on-device `.db` export/import; backups are not encrypted by KashVault)
@@ -117,9 +118,17 @@ Android Auto Backup stays off (`android:allowBackup="false"`). Android 12+ devic
 KashVault can turn bank SMS and UPI notifications into pending Magic Log items, tagged to a bank or credit card.
 
 1. **Tags you manage.** Category Studio keywords (for example `swiggy`, `uber`) identify the spend category. Each bank or card has SMS/UPI tags plus optional last-4 digits so a message like `XX4321` maps to that account.
-2. **Inbox, then confirm.** Captured items stay pending until you Accept (creates an expense/income on that source) or Dismiss. Filter the list by account. A message that was already parsed, accepted, or dismissed is never parsed again — SMS scan, UPI banners, and paste share the same seen list.
-3. **Android capture.** Turn on **Notification access** for live UPI banners (GPay, PhonePe, banks). The listener is protected by `BIND_NOTIFICATION_LISTENER_SERVICE`. **Scan SMS** reads the last 14 days of inbox messages only when you request a scan and grant `READ_SMS`. KashVault does not register an SMS receiver or capture SMS in the background. Google Play treats `READ_SMS` as restricted; Play distribution must meet Google's current permission policy.
-4. **On this phone only.** Inbox parsing and matching stay on-device. Nothing is uploaded for inbox matching.
+2. **Inbox, then confirm.** Captured items stay pending until you Accept (creates an expense/income on that source) or Dismiss. Matching messages the parser cannot interpret appear as **Needs review**; enter and verify an amount before accepting. Dismissed messages are deduplicated and never teach KashVault new keywords or tags.
+3. **Android capture.** Turn on **Notification access** for live UPI banners (GPay, PhonePe, banks). The listener is protected by `BIND_NOTIFICATION_LISTENER_SERVICE`. **Scan SMS** reads all available inbox history when requested and `READ_SMS` is granted. Optional hourly scans are off by default and run on Android's best-effort WorkManager schedule; Android may defer them to save battery. A scheduled scan can post a generic notification when new items are found. KashVault does not register an SMS receiver. Google Play treats `READ_SMS` as restricted; Play distribution must meet Google's current permission policy.
+4. **On this phone only.** Inbox parsing and matching stay on-device. SMS text is not included in scheduled notifications and is not uploaded for inbox matching.
+
+## Biometric app lock
+
+The optional app lock uses an enrolled Android biometric when KashVault launches.
+It does not accept a device PIN/password or a KashVault PIN as a fallback, and
+it does not encrypt the local database. Existing PIN-lock settings are removed
+when upgrading to a version with biometric app lock; the new lock stays off
+until you explicitly enable it.
 
 Open the inbox from Home, Add transaction, or Profile.
 

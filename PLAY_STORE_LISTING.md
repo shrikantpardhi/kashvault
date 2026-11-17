@@ -52,10 +52,10 @@ In particular, account identifiers/tokens, user-entered finance data included
 in optional Gemini requests, and Drive backups must be assessed under Google's
 current definitions for collection and sharing.
 
-The Android build declares `READ_SMS` for user-initiated SMS scanning. This is
-a restricted permission; obtain Google's approval if required for the chosen
-distribution. Do not claim automatic SMS capture: KashVault does not register
-an SMS receiver.
+The Android build declares `READ_SMS` for on-demand scanning and optional
+hourly scans enabled by the user. This is a restricted permission; obtain
+Google's approval if required for the chosen distribution. Do not claim
+automatic SMS capture: KashVault does not register an SMS receiver.
 
 ## Privacy policy
 

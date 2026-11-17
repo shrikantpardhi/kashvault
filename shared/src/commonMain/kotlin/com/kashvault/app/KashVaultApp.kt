@@ -11,7 +11,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -25,7 +24,6 @@ import com.kashvault.auth.createGoogleAuth
 import com.kashvault.data.FinanceRepository
 import com.kashvault.db.DatabaseDriverFactory
 import com.kashvault.domain.FinanceSnapshot
-import com.kashvault.lock.bindAppLockOnBackground
 import com.kashvault.ui.components.LoadingScreen
 import com.kashvault.ui.navigation.AppNavigatorHost
 import com.kashvault.ui.navigation.MainTabs
@@ -57,14 +55,6 @@ fun KashVaultApp(driverFactory: DatabaseDriverFactory) {
     val lockEnabled by viewModel.state.collectAsState()
     val unlocked by viewModel.vaultUnlocked.collectAsState()
     val showLock = !isLoading && lockEnabled.vaultLockEnabled && !unlocked
-
-    DisposableEffect(lockEnabled.vaultLockEnabled) {
-        if (!lockEnabled.vaultLockEnabled) {
-            return@DisposableEffect onDispose { }
-        }
-        val binding = bindAppLockOnBackground { viewModel.lockVault() }
-        onDispose { binding.cancel() }
-    }
 
     LaunchedEffect(latestToast?.id) {
         snackbarHostState.currentSnackbarData?.dismiss()

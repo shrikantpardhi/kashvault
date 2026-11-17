@@ -1,41 +1,46 @@
 package com.kashvault.lock
 
-import android.app.Activity
-import android.app.KeyguardManager
-import android.content.Context
-import android.content.Intent
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 import com.kashvault.auth.AndroidAppContext
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-
-private const val REQUEST_CODE_DEVICE_AUTH = 0xF001
-
-object DeviceAuthAndroid {
-    var pending: CompletableDeferred<Boolean>? = null
-    fun complete(resultCode: Int) {
-        pending?.complete(resultCode == Activity.RESULT_OK)
-        pending = null
-    }
-}
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 actual suspend fun requestDeviceAuth(prompt: String): Boolean {
-    val activity = AndroidAppContext.activity ?: return false
-    val km = activity.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-        ?: return false
-    if (!km.isDeviceSecure) return false
-    @Suppress("DEPRECATION")
-    val intent = km.createConfirmDeviceCredentialIntent(prompt, null) ?: return false
-    val deferred = CompletableDeferred<Boolean>()
-    DeviceAuthAndroid.pending = deferred
-    withContext(Dispatchers.Main) {
-        activity.startActivityForResult(intent, REQUEST_CODE_DEVICE_AUTH)
+    val activity = AndroidAppContext.activity as? FragmentActivity ?: return false
+    if (!isDeviceAuthAvailable()) return false
+    return suspendCancellableCoroutine { continuation ->
+        lateinit var biometricPrompt: BiometricPrompt
+        biometricPrompt = BiometricPrompt(
+            activity,
+            ContextCompat.getMainExecutor(activity),
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    if (continuation.isActive) continuation.resume(true)
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    if (continuation.isActive) continuation.resume(false)
+                }
+            },
+        )
+        continuation.invokeOnCancellation { biometricPrompt.cancelAuthentication() }
+        biometricPrompt.authenticate(
+            BiometricPrompt.PromptInfo.Builder()
+                .setTitle("Unlock KashVault")
+                .setSubtitle(prompt)
+                .setNegativeButtonText("Cancel")
+                .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_WEAK)
+                .build(),
+        )
     }
-    return deferred.await()
 }
 
 actual fun isDeviceAuthAvailable(): Boolean {
     val context = AndroidAppContext.appContext ?: return false
-    val km = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager ?: return false
-    return km.isDeviceSecure
+    return BiometricManager.from(context).canAuthenticate(
+        BiometricManager.Authenticators.BIOMETRIC_WEAK,
+    ) == BiometricManager.BIOMETRIC_SUCCESS
 }
