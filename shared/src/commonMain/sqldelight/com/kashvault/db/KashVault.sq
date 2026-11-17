@@ -1,0 +1,457 @@
+CREATE TABLE IF NOT EXISTS app_meta (
+    key TEXT NOT NULL PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS categories (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    icon TEXT NOT NULL,
+    color TEXT NOT NULL,
+    type TEXT,
+    keywords_json TEXT
+);
+
+CREATE TABLE IF NOT EXISTS expenses (
+    id TEXT NOT NULL PRIMARY KEY,
+    amount REAL NOT NULL,
+    category_id TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    note TEXT,
+    type TEXT,
+    is_auto_generated INTEGER,
+    source_id TEXT,
+    destination_id TEXT,
+    due_kind TEXT,
+    due_entity_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS payment_sources (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    last4 TEXT,
+    icon TEXT NOT NULL,
+    color TEXT NOT NULL,
+    keywords_json TEXT,
+    opening_balance REAL,
+    statement_due_date TEXT,
+    last_processed_month TEXT,
+    pay_from_source_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS inbox_items (
+    id TEXT NOT NULL PRIMARY KEY,
+    captured_at TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    sender TEXT NOT NULL,
+    body TEXT NOT NULL,
+    amount REAL NOT NULL,
+    type TEXT NOT NULL,
+    suggested_category_id TEXT,
+    suggested_source_id TEXT,
+    note TEXT,
+    status TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    matched_category_tag TEXT,
+    matched_source_tag TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS inbox_items_fingerprint ON inbox_items(fingerprint);
+
+CREATE TABLE IF NOT EXISTS inbox_seen (
+    fingerprint TEXT NOT NULL PRIMARY KEY,
+    seen_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS people (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    phone TEXT
+);
+
+CREATE TABLE IF NOT EXISTS borrow_lend (
+    id TEXT NOT NULL PRIMARY KEY,
+    person TEXT NOT NULL,
+    amount REAL NOT NULL,
+    type TEXT NOT NULL,
+    settled INTEGER NOT NULL,
+    timestamp TEXT NOT NULL,
+    note TEXT,
+    person_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS recurring_bills (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    amount REAL NOT NULL,
+    category_id TEXT NOT NULL,
+    frequency TEXT NOT NULL,
+    due_date TEXT NOT NULL,
+    last_processed_month TEXT,
+    source_id TEXT,
+    type TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS budgets (
+    category_id TEXT NOT NULL PRIMARY KEY,
+    budget_limit REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS investments (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    amount REAL NOT NULL,
+    invested_amount REAL,
+    type TEXT NOT NULL,
+    frequency TEXT,
+    timestamp TEXT NOT NULL,
+    due_date TEXT,
+    last_processed_month TEXT,
+    source_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS insurances (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    premium REAL NOT NULL,
+    frequency TEXT NOT NULL,
+    due_date TEXT NOT NULL,
+    last_processed_month TEXT,
+    source_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS loans (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    total_amount REAL NOT NULL,
+    annual_interest_rate REAL,
+    tenure_months INTEGER,
+    emi REAL NOT NULL,
+    remaining_amount REAL NOT NULL,
+    remaining_interest REAL,
+    outstanding_total REAL,
+    total_prepaid REAL,
+    emis_paid INTEGER,
+    due_date TEXT NOT NULL,
+    start_date TEXT,
+    last_processed_month TEXT,
+    principal_per_emi REAL,
+    interest_per_emi REAL,
+    source_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS savings_goals (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    target REAL NOT NULL,
+    current REAL NOT NULL,
+    completed INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS secrets (
+    id TEXT NOT NULL PRIMARY KEY,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,
+    fields_json TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    tag TEXT,
+    content TEXT,
+    color TEXT
+);
+
+CREATE TABLE IF NOT EXISTS emergency_fund (
+    id TEXT NOT NULL PRIMARY KEY,
+    target_months INTEGER NOT NULL,
+    monthly_requirement REAL NOT NULL,
+    current_saved REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_profile (
+    id TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    mobile TEXT NOT NULL,
+    gemini_api_key TEXT,
+    theme TEXT,
+    image_path TEXT
+);
+
+CREATE TABLE IF NOT EXISTS sync_settings (
+    id TEXT NOT NULL PRIMARY KEY,
+    auto_sync INTEGER NOT NULL,
+    last_backup_at TEXT,
+    last_restore_at TEXT,
+    last_sync_at TEXT,
+    last_local_change_at TEXT,
+    cloud_backup_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    id TEXT NOT NULL PRIMARY KEY,
+    local_mode INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS google_session (
+    id TEXT NOT NULL PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    email TEXT,
+    display_name TEXT,
+    image_url TEXT,
+    access_token TEXT,
+    refresh_token TEXT,
+    id_token TEXT,
+    expires_at TEXT
+);
+
+-- Categories
+selectAllCategories:
+SELECT * FROM categories ORDER BY name;
+
+insertCategory:
+INSERT OR REPLACE INTO categories (id, name, icon, color, type, keywords_json)
+VALUES (?, ?, ?, ?, ?, ?);
+
+deleteCategory:
+DELETE FROM categories WHERE id = ?;
+
+deleteAllCategories:
+DELETE FROM categories;
+
+reassignExpenseCategory:
+UPDATE expenses SET category_id = :keepId WHERE category_id = :dropId;
+
+reassignBudgetCategory:
+UPDATE budgets SET category_id = :keepId WHERE category_id = :dropId;
+
+reassignInboxCategory:
+UPDATE inbox_items SET suggested_category_id = :keepId WHERE suggested_category_id = :dropId;
+
+reassignBillCategory:
+UPDATE recurring_bills SET category_id = :keepId WHERE category_id = :dropId;
+
+-- Expenses
+selectAllExpenses:
+SELECT * FROM expenses ORDER BY timestamp DESC;
+
+insertExpense:
+INSERT OR REPLACE INTO expenses (id, amount, category_id, timestamp, note, type, is_auto_generated, source_id, destination_id, due_kind, due_entity_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteExpense:
+DELETE FROM expenses WHERE id = ?;
+
+deleteAllExpenses:
+DELETE FROM expenses;
+
+-- Payment sources (banks and credit cards)
+selectAllPaymentSources:
+SELECT * FROM payment_sources ORDER BY kind, name;
+
+insertPaymentSource:
+INSERT OR REPLACE INTO payment_sources (id, name, kind, last4, icon, color, keywords_json, opening_balance, statement_due_date, last_processed_month, pay_from_source_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deletePaymentSource:
+DELETE FROM payment_sources WHERE id = ?;
+
+selectPendingInbox:
+SELECT * FROM inbox_items WHERE status = 'pending' ORDER BY captured_at DESC;
+
+countPendingInbox:
+SELECT COUNT(*) FROM inbox_items WHERE status = 'pending';
+
+selectAllInboxItems:
+SELECT * FROM inbox_items;
+
+selectInboxByFingerprint:
+SELECT * FROM inbox_items WHERE fingerprint = ? LIMIT 1;
+
+selectInboxSeen:
+SELECT fingerprint FROM inbox_seen WHERE fingerprint = ? LIMIT 1;
+
+insertInboxSeen:
+INSERT OR IGNORE INTO inbox_seen (fingerprint, seen_at) VALUES (?, ?);
+
+insertInboxItem:
+INSERT OR REPLACE INTO inbox_items (
+    id, captured_at, channel, sender, body, amount, type, suggested_category_id, suggested_source_id,
+    note, status, fingerprint, matched_category_tag, matched_source_tag
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+updateInboxStatus:
+UPDATE inbox_items SET status = ? WHERE id = ?;
+
+clearInboxBody:
+UPDATE inbox_items SET body = '' WHERE id = ?;
+
+clearProcessedInboxBodies:
+UPDATE inbox_items SET body = '' WHERE status != 'pending';
+
+updateInboxSuggestion:
+UPDATE inbox_items SET suggested_category_id = ?, suggested_source_id = ?, note = ? WHERE id = ?;
+
+deleteInboxItem:
+DELETE FROM inbox_items WHERE id = ?;
+
+-- Recurring bills and salary
+selectAllRecurringBills:
+SELECT * FROM recurring_bills ORDER BY type, name;
+
+insertRecurringBill:
+INSERT OR REPLACE INTO recurring_bills (id, name, amount, category_id, frequency, due_date, last_processed_month, source_id, type)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteRecurringBill:
+DELETE FROM recurring_bills WHERE id = ?;
+
+deleteAllRecurringBills:
+DELETE FROM recurring_bills;
+
+-- Borrow/Lend
+selectAllBorrowLend:
+SELECT * FROM borrow_lend ORDER BY timestamp DESC;
+
+insertBorrowLend:
+INSERT OR REPLACE INTO borrow_lend (id, person, amount, type, settled, timestamp, note, person_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteBorrowLend:
+DELETE FROM borrow_lend WHERE id = ?;
+
+deleteAllBorrowLend:
+DELETE FROM borrow_lend;
+
+-- Budgets
+selectAllBudgets:
+SELECT * FROM budgets;
+
+insertBudget:
+INSERT OR REPLACE INTO budgets (category_id, budget_limit) VALUES (?, ?);
+
+deleteAllBudgets:
+DELETE FROM budgets;
+
+-- Investments
+selectAllInvestments:
+SELECT * FROM investments ORDER BY name;
+
+insertInvestment:
+INSERT OR REPLACE INTO investments (id, name, amount, invested_amount, type, frequency, timestamp, due_date, last_processed_month, source_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteInvestment:
+DELETE FROM investments WHERE id = ?;
+
+deleteAllInvestments:
+DELETE FROM investments;
+
+-- Insurances
+selectAllInsurances:
+SELECT * FROM insurances ORDER BY name;
+
+insertInsurance:
+INSERT OR REPLACE INTO insurances (id, name, premium, frequency, due_date, last_processed_month, source_id)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+deleteInsurance:
+DELETE FROM insurances WHERE id = ?;
+
+deleteAllInsurances:
+DELETE FROM insurances;
+
+-- Loans
+selectAllLoans:
+SELECT * FROM loans ORDER BY name;
+
+insertLoan:
+INSERT OR REPLACE INTO loans (
+    id, name, total_amount, annual_interest_rate, tenure_months, emi, remaining_amount,
+    remaining_interest, outstanding_total, total_prepaid, emis_paid, due_date, start_date,
+    last_processed_month, principal_per_emi, interest_per_emi, source_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteLoan:
+DELETE FROM loans WHERE id = ?;
+
+deleteAllLoans:
+DELETE FROM loans;
+
+-- Savings Goals
+selectAllSavingsGoals:
+SELECT * FROM savings_goals ORDER BY name;
+
+insertSavingsGoal:
+INSERT OR REPLACE INTO savings_goals (id, name, target, current, completed)
+VALUES (?, ?, ?, ?, ?);
+
+deleteSavingsGoal:
+DELETE FROM savings_goals WHERE id = ?;
+
+deleteAllSavingsGoals:
+DELETE FROM savings_goals;
+
+-- Emergency Fund
+selectEmergencyFund:
+SELECT * FROM emergency_fund LIMIT 1;
+
+insertEmergencyFund:
+INSERT OR REPLACE INTO emergency_fund (id, target_months, monthly_requirement, current_saved)
+VALUES (?, ?, ?, ?);
+
+-- User Profile
+selectUserProfile:
+SELECT * FROM user_profile LIMIT 1;
+
+insertUserProfile:
+INSERT OR REPLACE INTO user_profile (id, name, email, mobile, gemini_api_key, theme, image_path)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+-- Sync Settings
+selectSyncSettings:
+SELECT * FROM sync_settings LIMIT 1;
+
+insertSyncSettings:
+INSERT OR REPLACE INTO sync_settings (id, auto_sync, last_backup_at, last_restore_at, last_sync_at, last_local_change_at, cloud_backup_at)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+-- App Settings
+selectAppSettings:
+SELECT * FROM app_settings LIMIT 1;
+
+insertAppSettings:
+INSERT OR REPLACE INTO app_settings (id, local_mode) VALUES (?, ?);
+
+-- Google session
+selectGoogleSession:
+SELECT * FROM google_session LIMIT 1;
+
+insertGoogleSession:
+INSERT OR REPLACE INTO google_session (id, user_id, email, display_name, image_url, access_token, refresh_token, id_token, expires_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteGoogleSession:
+DELETE FROM google_session;
+
+-- People
+selectAllPeople:
+SELECT * FROM people ORDER BY name;
+
+insertPerson:
+INSERT OR REPLACE INTO people (id, name, phone) VALUES (?, ?, ?);
+
+deletePerson:
+DELETE FROM people WHERE id = ?;
+
+-- App Meta
+getSchemaVersion:
+SELECT value FROM app_meta WHERE key = 'schema_version';
+
+setSchemaVersion:
+INSERT OR REPLACE INTO app_meta (key, value) VALUES ('schema_version', ?);
+
+getAppMeta:
+SELECT value FROM app_meta WHERE key = ?;
+
+setAppMeta:
+INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?);
