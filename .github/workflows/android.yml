@@ -18,4 +18,4 @@ jobs:
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
       - name: Run shared tests and assemble Android debug APK
-        run: bash gradlew :shared:testDebugUnitTest :app:assembleDebug
+        run: bash gradlew "-Pandroid.useAndroidX=true" :shared:testDebugUnitTest :app:assembleDebug
