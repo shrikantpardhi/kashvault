@@ -1,7 +1,6 @@
 name: Android
 
 on:
-  push:
   pull_request:
 
 permissions:

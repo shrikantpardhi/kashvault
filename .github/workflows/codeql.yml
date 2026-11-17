@@ -22,10 +22,21 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
           languages: java-kotlin
-          build-mode: autobuild
+          build-mode: manual
+      - name: Create Gradle properties from safe template
+        run: cp gradle.properties.example gradle.properties
+      - name: Build and test Android sources
+        run: bash gradlew "-Pandroid.useAndroidX=true" :shared:testDebugUnitTest :app:assembleDebug
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
