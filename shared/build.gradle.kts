@@ -45,6 +45,7 @@ kotlin {
             implementation(compose.uiTooling)
             implementation(libs.ktor.client.okhttp)
             implementation(libs.sqldelight.android)
+            implementation(libs.androidx.biometric)
             implementation(libs.androidx.credentials)
             implementation(libs.androidx.credentials.play.services)
             implementation(libs.google.id)

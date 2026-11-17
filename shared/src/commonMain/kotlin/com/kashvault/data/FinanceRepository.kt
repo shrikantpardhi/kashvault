@@ -1,11 +1,7 @@
 package com.kashvault.data
 
 import com.kashvault.ai.normalizeGeminiModel
-import com.kashvault.auth.hashVaultPin
-import com.kashvault.auth.isValidVaultPin
-import com.kashvault.auth.newVaultPinSalt
 import com.kashvault.auth.overlayGoogleSession
-import com.kashvault.auth.vaultPinMatches
 import com.kashvault.backup.DatabaseBackupException
 import com.kashvault.backup.assertSqliteDatabase
 import com.kashvault.backup.deleteFileIfExists
@@ -20,6 +16,7 @@ import com.kashvault.db.toDomain
 import com.kashvault.domain.*
 import com.kashvault.inbox.bestInboxDuplicate
 import com.kashvault.inbox.DEFAULT_SMS_SCAN_KEYWORDS
+import com.kashvault.inbox.InboxScanRules
 import com.kashvault.inbox.defaultSourceTags
 import com.kashvault.inbox.duplicateInboxIdsToRemove
 import com.kashvault.inbox.expenseMatchesInboxPurchase
@@ -29,8 +26,10 @@ import com.kashvault.inbox.inboxMerchantHint
 import com.kashvault.inbox.merchantQuality
 import com.kashvault.inbox.learnedCategoryKeywords
 import com.kashvault.inbox.learnedSourceKeywords
-import com.kashvault.inbox.messageContainsScanKeyword
 import com.kashvault.inbox.parseInboxMessage
+import com.kashvault.inbox.resolvedInboxAmount
+import com.kashvault.inbox.shouldLearnFromInboxItem
+import com.kashvault.inbox.shouldRecoverUnparsedInboxMessage
 import com.kashvault.reminder.parseInboxReminderSettings
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
@@ -204,11 +203,19 @@ class FinanceRepository(private val driverFactory: DatabaseDriverFactory) {
                 status TEXT NOT NULL,
                 fingerprint TEXT NOT NULL,
                 matched_category_tag TEXT,
-                matched_source_tag TEXT
+                matched_source_tag TEXT,
+                needs_review INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent(),
             0,
         )
+        runCatching {
+            driver.execute(
+                null,
+                "ALTER TABLE inbox_items ADD COLUMN needs_review INTEGER NOT NULL DEFAULT 0",
+                0,
+            ).value
+        }
         driver.execute(
             null,
             """
@@ -254,9 +261,11 @@ class FinanceRepository(private val driverFactory: DatabaseDriverFactory) {
     }
 
     private fun hasSeenInbox(keys: List<String>): Boolean =
+        keys.any { key -> database.kashVaultQueries.selectInboxSeen(key).executeAsOneOrNull() != null }
+
+    private fun hasInboxItem(keys: List<String>): Boolean =
         keys.any { key ->
-            database.kashVaultQueries.selectInboxSeen(key).executeAsOneOrNull() != null ||
-                database.kashVaultQueries.selectInboxByFingerprint(key).executeAsOneOrNull() != null
+            database.kashVaultQueries.selectInboxByFingerprint(key).executeAsOneOrNull() != null
         }
 
     private fun markInboxSeen(keys: List<String>, seenAt: String) {
@@ -360,6 +369,36 @@ class FinanceRepository(private val driverFactory: DatabaseDriverFactory) {
 
     fun saveSmsScanKeywords(keywords: List<String>) {
         database.kashVaultQueries.setAppMeta(Constants.META_SMS_SCAN_KEYWORDS, keywordsToText(keywords))
+    }
+
+    fun getInboxScanRules(): InboxScanRules = withDb {
+        InboxScanRules(
+            keywords = getSmsScanKeywords(),
+            categories = database.kashVaultQueries.selectAllCategories().executeAsList()
+                .map { it.toDomain() }.ifEmpty { INITIAL_CATEGORIES },
+            sources = database.kashVaultQueries.selectAllPaymentSources().executeAsList().map { it.toDomain() },
+        )
+    }
+
+    fun periodicSmsScanEnabled(): Boolean = withDb {
+        database.kashVaultQueries.getAppMeta(Constants.META_PERIODIC_SMS_SCAN_ENABLED)
+            .executeAsOneOrNull() == "1"
+    }
+
+    fun setPeriodicSmsScanEnabled(enabled: Boolean) = withDb {
+        database.kashVaultQueries.setAppMeta(
+            Constants.META_PERIODIC_SMS_SCAN_ENABLED,
+            if (enabled) "1" else "0",
+        )
+    }
+
+    fun lastSmsScanAtEpochMs(): Long? = withDb {
+        database.kashVaultQueries.getAppMeta(Constants.META_LAST_SMS_SCAN_AT)
+            .executeAsOneOrNull()?.toLongOrNull()
+    }
+
+    fun setLastSmsScanAtEpochMs(epochMs: Long) = withDb {
+        database.kashVaultQueries.setAppMeta(Constants.META_LAST_SMS_SCAN_AT, epochMs.toString())
     }
 
     fun getAccountKey(): String {
@@ -491,26 +530,16 @@ class FinanceRepository(private val driverFactory: DatabaseDriverFactory) {
         normalizeGeminiModel(database.kashVaultQueries.getAppMeta(Constants.META_GEMINI_MODEL).executeAsOneOrNull())
 
     private fun vaultLockEnabledLocked(): Boolean =
-        !database.kashVaultQueries.getAppMeta(Constants.META_VAULT_PIN_HASH).executeAsOneOrNull().isNullOrBlank()
+        database.kashVaultQueries.getAppMeta(Constants.META_BIOMETRIC_LOCK_ENABLED)
+            .executeAsOneOrNull() == "1"
 
     fun vaultLockEnabled(): Boolean = withDb { vaultLockEnabledLocked() }
 
-    fun setVaultPin(pin: String) = withDb {
-        require(isValidVaultPin(pin)) { "PIN must be 4 to 8 digits" }
-        val salt = newVaultPinSalt()
-        database.kashVaultQueries.setAppMeta(Constants.META_VAULT_PIN_SALT, salt)
-        database.kashVaultQueries.setAppMeta(Constants.META_VAULT_PIN_HASH, hashVaultPin(pin, salt))
-    }
-
-    fun verifyVaultPin(pin: String): Boolean = withDb {
-        val salt = database.kashVaultQueries.getAppMeta(Constants.META_VAULT_PIN_SALT).executeAsOneOrNull().orEmpty()
-        val hash = database.kashVaultQueries.getAppMeta(Constants.META_VAULT_PIN_HASH).executeAsOneOrNull().orEmpty()
-        vaultPinMatches(pin, salt, hash)
-    }
-
-    fun clearVaultPin() = withDb {
-        database.kashVaultQueries.setAppMeta(Constants.META_VAULT_PIN_HASH, "")
-        database.kashVaultQueries.setAppMeta(Constants.META_VAULT_PIN_SALT, "")
+    fun setBiometricLockEnabled(enabled: Boolean) = withDb {
+        database.kashVaultQueries.setAppMeta(
+            Constants.META_BIOMETRIC_LOCK_ENABLED,
+            if (enabled) "1" else "0",
+        )
     }
 
     fun countPendingInbox(): Int = withDb {
@@ -608,9 +637,9 @@ class FinanceRepository(private val driverFactory: DatabaseDriverFactory) {
             setupCompleted = setupCompleted,
             smsScanKeywords = getSmsScanKeywords(),
             inboxReminder = inboxReminderSettingsLocked(),
+            periodicSmsScanEnabled = periodicSmsScanEnabled(),
             geminiModel = geminiModelLocked(),
             vaultLockEnabled = vaultLockEnabledLocked(),
-            useDeviceLock = database.kashVaultQueries.getAppMeta("use_device_lock").executeAsOneOrNull() == "1",
         )
     }
 
@@ -665,20 +694,20 @@ class FinanceRepository(private val driverFactory: DatabaseDriverFactory) {
         sender: String,
         body: String,
         capturedAt: String = kotlinx.datetime.Clock.System.now().toString(),
-    ): InboxItem? {
-        ensurePaymentSourceSchema()
+        scanRules: InboxScanRules? = null,
+    ): InboxItem? = withDb {
+        if (!isInitialized) initializeBlocking()
         val trimmed = body.trim()
-        if (trimmed.isEmpty()) return null
-        if (channel == Constants.INBOX_SMS || channel == Constants.INBOX_NOTIFICATION) {
-            if (!messageContainsScanKeyword(sender, trimmed, getSmsScanKeywords())) return null
-        }
-        val parsed = parseInboxMessage(
-            body = trimmed,
-            sender = sender,
-            categories = database.kashVaultQueries.selectAllCategories().executeAsList().map { it.toDomain() }
-                .ifEmpty { INITIAL_CATEGORIES },
-            sources = database.kashVaultQueries.selectAllPaymentSources().executeAsList().map { it.toDomain() },
-        )
+        if (trimmed.isEmpty()) return@withDb null
+        val categories = database.kashVaultQueries.selectAllCategories().executeAsList()
+            .map { it.toDomain() }.ifEmpty { INITIAL_CATEGORIES }
+        val sources = database.kashVaultQueries.selectAllPaymentSources().executeAsList().map { it.toDomain() }
+        val rules = scanRules ?: InboxScanRules(getSmsScanKeywords(), categories, sources)
+        if ((channel == Constants.INBOX_SMS || channel == Constants.INBOX_NOTIFICATION) &&
+            !rules.matches(sender, trimmed)
+        ) return@withDb null
+        val parsed = parseInboxMessage(trimmed, sender, categories, sources)
+        val matchedTags = rules.tagsFor(sender, trimmed)
         val merchant = parsed?.let {
             inboxMerchantHint(trimmed, it.note, it.matchedCategoryTag, sender)
         } ?: inboxMerchantHint(trimmed, sender = sender)
@@ -690,8 +719,12 @@ class FinanceRepository(private val driverFactory: DatabaseDriverFactory) {
             capturedAt = capturedAt,
             merchant = merchant,
         )
-        if (keys.isEmpty()) return null
-        if (hasSeenInbox(keys)) return null
+        if (keys.isEmpty()) return@withDb null
+        val alreadyHasInboxItem = hasInboxItem(keys)
+        if (alreadyHasInboxItem) return@withDb null
+        if (hasSeenInbox(keys) && !shouldRecoverUnparsedInboxMessage(parsed, alreadyHasInboxItem)) {
+            return@withDb null
+        }
         if (parsed != null) {
             val existingInbox = bestInboxDuplicate(
                 amount = parsed.amount,
@@ -705,7 +738,7 @@ class FinanceRepository(private val driverFactory: DatabaseDriverFactory) {
                     .any { expenseMatchesInboxPurchase(it, parsed.amount, parsed.type, capturedAt, merchant) }
             if (alreadyBooked) {
                 markInboxSeen(keys, capturedAt)
-                return null
+                return@withDb null
             }
             if (existingInbox != null && existingInbox.status == Constants.INBOX_PENDING) {
                 val existingMerchant = inboxMerchantHint(
@@ -718,32 +751,32 @@ class FinanceRepository(private val driverFactory: DatabaseDriverFactory) {
                     database.kashVaultQueries.deleteInboxItem(existingInbox.id)
                 } else {
                     markInboxSeen(keys, capturedAt)
-                    return null
+                    return@withDb null
                 }
             }
         }
-        markInboxSeen(keys, capturedAt)
-        if (parsed == null) return null
         val item = InboxItem(
             id = "${kotlinx.datetime.Clock.System.now().toEpochMilliseconds()}_${keys.first().hashCode()}",
             capturedAt = capturedAt,
             channel = channel,
             sender = sender,
             body = trimmed,
-            amount = parsed.amount,
-            type = parsed.type,
-            suggestedCategoryId = parsed.categoryId,
-            suggestedSourceId = parsed.sourceId,
-            note = parsed.note,
+            amount = parsed?.amount ?: 0.0,
+            type = parsed?.type ?: "expense",
+            suggestedCategoryId = parsed?.categoryId ?: matchedTags.categoryId,
+            suggestedSourceId = parsed?.sourceId ?: matchedTags.sourceId,
+            note = parsed?.note,
             status = Constants.INBOX_PENDING,
             fingerprint = keys.first(),
-            matchedCategoryTag = parsed.matchedCategoryTag,
-            matchedSourceTag = parsed.matchedSourceTag,
+            matchedCategoryTag = parsed?.matchedCategoryTag ?: matchedTags.categoryTag,
+            matchedSourceTag = parsed?.matchedSourceTag ?: matchedTags.sourceTag,
+            needsReview = parsed == null,
         )
-        return runCatching {
+        database.transaction {
             persistInbox(item)
-            item
-        }.getOrNull()
+            markInboxSeen(keys, capturedAt)
+        }
+        item
     }
 
     fun updateInboxSuggestion(id: String, categoryId: String?, sourceId: String?, note: String?) {
@@ -764,7 +797,7 @@ class FinanceRepository(private val driverFactory: DatabaseDriverFactory) {
             .firstOrNull { it.id == id }
             ?: return null
         val resolvedType = type?.takeIf { it.isNotBlank() } ?: item.type
-        val resolvedAmount = amount?.takeIf { it.isFinite() && it > 0 } ?: item.amount
+        val resolvedAmount = resolvedInboxAmount(item, amount) ?: return null
         val fallbackCategoryId = categoryId?.takeIf { it.isNotBlank() } ?: preferredExpenseCategoryId(
             categories = database.kashVaultQueries.selectAllCategories().executeAsList()
                 .map { it.toDomain() }
@@ -801,8 +834,8 @@ class FinanceRepository(private val driverFactory: DatabaseDriverFactory) {
         database.kashVaultQueries.clearInboxBody(id)
     }
 
-    fun restoreInboxPending(id: String) {
-        database.kashVaultQueries.updateInboxStatus(Constants.INBOX_PENDING, id)
+    fun restoreInboxPending(id: String, body: String? = null) {
+        database.kashVaultQueries.restoreInboxPending(body, id)
     }
 
     private fun persistInbox(item: InboxItem) {
@@ -821,6 +854,7 @@ class FinanceRepository(private val driverFactory: DatabaseDriverFactory) {
             fingerprint = item.fingerprint,
             matched_category_tag = item.matchedCategoryTag,
             matched_source_tag = item.matchedSourceTag,
+            needs_review = if (item.needsReview) 1L else 0L,
         )
     }
 
@@ -940,10 +974,6 @@ class FinanceRepository(private val driverFactory: DatabaseDriverFactory) {
         }
     }
 
-    fun setUseDeviceLock(enabled: Boolean) = withDb {
-        database.kashVaultQueries.setAppMeta("use_device_lock", if (enabled) "1" else "0")
-    }
-
     fun saveEmergencyFund(fund: EmergencyFund) {
         database.kashVaultQueries.insertEmergencyFund(
             id = Constants.SINGLETON_ID,
@@ -954,6 +984,7 @@ class FinanceRepository(private val driverFactory: DatabaseDriverFactory) {
     }
 
     fun learnCaptureFromInbox(item: InboxItem) {
+        if (!shouldLearnFromInboxItem(item)) return
         val categories = database.kashVaultQueries.selectAllCategories().executeAsList().map { it.toDomain() }
         val sources = database.kashVaultQueries.selectAllPaymentSources().executeAsList().map { it.toDomain() }
         val category = categories.find { it.id == item.suggestedCategoryId }
@@ -1132,6 +1163,10 @@ class FinanceRepository(private val driverFactory: DatabaseDriverFactory) {
                 ensureGoogleSessionTable()
                 ensurePaymentSourceSchema()
                 ensureDefaults()
+                database.kashVaultQueries.setAppMeta(Constants.META_VAULT_PIN_HASH, "")
+                database.kashVaultQueries.setAppMeta(Constants.META_VAULT_PIN_SALT, "")
+                database.kashVaultQueries.setAppMeta("use_device_lock", "0")
+                database.kashVaultQueries.setAppMeta(Constants.META_BIOMETRIC_LOCK_ENABLED, "0")
                 database.kashVaultQueries.setSchemaVersion(Constants.SCHEMA_VERSION.toString())
             }
         } else {

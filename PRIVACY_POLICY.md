@@ -19,8 +19,8 @@ Accounts, balances, transactions, budgets, loans, goals, profile settings,
 Google sign-in tokens, and a Gemini API key (if configured) are stored in the
 app's local SQLite database. KashVault does **not** encrypt this database.
 Android's app-private storage provides the platform's normal app isolation;
-the vault PIN only gates access through the app and does not encrypt the
-database or protect exported database files.
+the optional biometric app lock only gates access through the app and does not
+encrypt the database or protect exported database files.
 
 ### Backups
 
@@ -36,11 +36,12 @@ who obtains an exported backup file may be able to read its contents.
 
 If you grant notification access, KashVault reads notification text for
 matching bank and UPI alerts and stores matched items locally in the inbox.
-If you grant `READ_SMS` and request a scan, KashVault reads recent SMS messages
-to find candidate transactions. SMS is scanned on demand; KashVault does not
-register a background SMS receiver or capture SMS messages automatically.
-Pasted message text is also processed locally. Inbox text is not sent to
-KashVault servers.
+If you grant `READ_SMS` and request a scan, KashVault reads available inbox SMS
+history to find candidate transactions. Hourly background scanning is optional,
+off by default, and uses Android WorkManager, whose runs may be deferred by the
+operating system. KashVault does not register an SMS receiver. Pasted message
+text is also processed locally. Inbox text is not sent to KashVault servers.
+Scheduled-scan notifications contain only a generic item count, not SMS text.
 
 ### Gemini AI features
 
@@ -72,14 +73,17 @@ encrypt. Drive access is limited to the configured app-data scope.
 
 - **`INTERNET`**: Google Sign-In, optional Google Drive backup, and optional
   direct Gemini API requests.
-- **`READ_SMS`**: optional, user-initiated SMS scan after runtime permission is
-  granted. KashVault does not request `RECEIVE_SMS`.
+- **`READ_SMS`**: optional, on-demand and explicitly enabled hourly SMS scans
+  after runtime permission is granted. KashVault does not request
+  `RECEIVE_SMS`.
 - **Notification access**: optional, separately enabled by the user in Android
   settings to process bank and UPI notification text locally.
 - **`POST_NOTIFICATIONS`** and **`RECEIVE_BOOT_COMPLETED`**: optional inbox
-  reminders and restoring their schedule after reboot.
+  reminders, scheduled-scan alerts, and restoring schedules after reboot.
 - **`SCHEDULE_EXACT_ALARM`**: scheduling reminders at the selected time where
   Android requires this access.
+- **Biometrics**: optional app-launch authentication using Android's biometric
+  prompt. Device credentials are not offered as a fallback.
 - **Photo picker**: used only if you select a profile photo.
 
 ## 4. Retention and deletion

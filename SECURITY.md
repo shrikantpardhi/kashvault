@@ -16,8 +16,8 @@ signing keys, or other people's data in a report.
 KashVault is a personal finance application and is not a bank or a security
 auditor. Financial records and settings are stored in an ordinary SQLite
 database in the app's private storage; the database and exported/Drive backups
-are not encrypted by KashVault. A vault PIN gates app access but does not
-encrypt the database. Do not rely on it as protection against a person with
+are not encrypted by KashVault. The optional biometric app lock only gates
+access through the app; do not rely on it as protection against a person with
 access to the device's app data or an unencrypted backup.
 
 SHA-256 values displayed by the app are fingerprints of current record data.

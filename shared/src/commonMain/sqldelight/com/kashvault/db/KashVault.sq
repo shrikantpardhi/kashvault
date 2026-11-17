@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS inbox_items (
     status TEXT NOT NULL,
     fingerprint TEXT NOT NULL,
     matched_category_tag TEXT,
-    matched_source_tag TEXT
+    matched_source_tag TEXT,
+    needs_review INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS inbox_items_fingerprint ON inbox_items(fingerprint);
@@ -276,11 +277,14 @@ INSERT OR IGNORE INTO inbox_seen (fingerprint, seen_at) VALUES (?, ?);
 insertInboxItem:
 INSERT OR REPLACE INTO inbox_items (
     id, captured_at, channel, sender, body, amount, type, suggested_category_id, suggested_source_id,
-    note, status, fingerprint, matched_category_tag, matched_source_tag
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    note, status, fingerprint, matched_category_tag, matched_source_tag, needs_review
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 updateInboxStatus:
 UPDATE inbox_items SET status = ? WHERE id = ?;
+
+restoreInboxPending:
+UPDATE inbox_items SET status = 'pending', body = COALESCE(?, body) WHERE id = ?;
 
 clearInboxBody:
 UPDATE inbox_items SET body = '' WHERE id = ?;

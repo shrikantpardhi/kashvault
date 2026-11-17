@@ -1,7 +1,7 @@
 # Signed APK and Play Store release
 
 Package name: `com.kashvault`  
-Current release: `versionName 1.0.1` / `versionCode 2` in `app/build.gradle.kts`
+Current release: `versionName 1.1.0` / `versionCode 3` in `app/build.gradle.kts`
 
 Play Store accepts an **Android App Bundle (`.aab`)**, not a raw APK. Use a signed APK only for sideloading or for a device that cannot install from Play.
 
@@ -56,8 +56,8 @@ Without this file (or those env vars), release tasks fail before producing an AP
 Edit `app/build.gradle.kts`:
 
 ```kotlin
-versionCode = 3        // must increase on every Play upload
-versionName = "1.0.2"  // user-visible
+versionCode = 4        // must increase on every Play upload
+versionName = "1.1.1"  // user-visible
 ```
 
 `applicationId` (`com.kashvault`) must not change after the first Play upload.

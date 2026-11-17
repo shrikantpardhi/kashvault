@@ -186,6 +186,7 @@ data class InboxItem(
     val fingerprint: String,
     val matchedCategoryTag: String? = null,
     val matchedSourceTag: String? = null,
+    val needsReview: Boolean = false,
 )
 
 @Serializable
@@ -244,16 +245,16 @@ data class FinanceSnapshot(
     val setupCompleted: Boolean = false,
     val smsScanKeywords: List<String> = emptyList(),
     val inboxReminder: InboxReminderSettings = InboxReminderSettings(),
+    val periodicSmsScanEnabled: Boolean = false,
     val accountKey: String = Constants.ACCOUNT_KEY_LOCAL,
     val geminiModel: String = "",
     val vaultLockEnabled: Boolean = false,
-    val useDeviceLock: Boolean = false,
 )
 
 typealias Timeframe = String // daily, weekly, monthly, yearly
 
 object Constants {
-    const val SCHEMA_VERSION = 14
+    const val SCHEMA_VERSION = 15
     const val SINGLETON_ID = "singleton"
     const val RUPEE_SIGN = "₹"
     const val SOURCE_BANK = "bank"
@@ -278,6 +279,9 @@ object Constants {
     const val META_INBOX_REMINDER_ENABLED = "inbox_reminder_enabled"
     const val META_INBOX_REMINDER_HOUR = "inbox_reminder_hour"
     const val META_INBOX_REMINDER_MINUTE = "inbox_reminder_minute"
+    const val META_PERIODIC_SMS_SCAN_ENABLED = "periodic_sms_scan_enabled"
+    const val META_LAST_SMS_SCAN_AT = "last_sms_scan_at"
+    const val META_BIOMETRIC_LOCK_ENABLED = "biometric_lock_enabled"
     const val META_VAULT_PIN_HASH = "vault_pin_hash"
     const val META_VAULT_PIN_SALT = "vault_pin_salt"
     const val INBOX_PASTE = "paste"

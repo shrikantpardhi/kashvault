@@ -214,7 +214,12 @@ object ProfileScreen : Screen {
                         )
                         SettingsRow(
                             title = "Message scan",
-                            subtitle = messageScanSubtitle(reminder.enabled, reminder.hour, reminder.minute),
+                            subtitle = messageScanSubtitle(
+                                state.periodicSmsScanEnabled,
+                                reminder.enabled,
+                                reminder.hour,
+                                reminder.minute,
+                            ),
                             onClick = { navigator.push(ScanKeywordsScreen) },
                             icon = Icons.Default.Sms,
                             showDivider = false,
@@ -230,7 +235,7 @@ object ProfileScreen : Screen {
                         )
                         SettingsRow(
                             title = "App lock",
-                            subtitle = if (state.vaultLockEnabled) "PIN on" else "Off",
+                            subtitle = if (state.vaultLockEnabled) "Biometrics on" else "Off",
                             onClick = { navigator.push(AppLockScreen) },
                             icon = Icons.Default.Lock,
                         )
@@ -1071,6 +1076,7 @@ object ScanKeywordsScreen : Screen {
         val isLoading by vm.isLoading.collectAsState()
         val reminder = state.inboxReminder
         val canNotify by vm.canPostNotifications.collectAsState()
+        val smsPermissionGranted by vm.smsPermissionGranted.collectAsState()
         var keywordsText by remember(state.smsScanKeywords) {
             mutableStateOf(keywordsToText(state.smsScanKeywords.ifEmpty { DEFAULT_SMS_SCAN_KEYWORDS }))
         }
@@ -1092,10 +1098,45 @@ object ScanKeywordsScreen : Screen {
             ) {
                 item {
                     Text(
-                        "SMS and UPI alerts are kept only if the message contains one of these words. Parsing stays on this phone.",
+                        "Messages matching these words or your category and account tags are kept. Parsing stays on this phone.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                item {
+                    KashCard {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Hourly SMS scans", style = MaterialTheme.typography.titleMedium)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "Scan for new matches in the background and alert you when items need review. Android may defer scans to save battery.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = state.periodicSmsScanEnabled,
+                                onCheckedChange = { vm.setPeriodicSmsScanEnabled(it) },
+                            )
+                        }
+                        if (state.periodicSmsScanEnabled && !smsPermissionGranted) {
+                            Text(
+                                "SMS permission is needed for scheduled scans. Tap the switch off and on to grant it.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                        }
+                        if (state.periodicSmsScanEnabled && !canNotify) {
+                            TextButton(
+                                onClick = { vm.requestInboxReminderPermission() },
+                                modifier = Modifier.height(48.dp),
+                            ) {
+                                Text("Allow notifications")
+                            }
+                        }
+                    }
                 }
                 item {
                     KashCard {
@@ -1178,13 +1219,19 @@ private fun backupSubtitle(lastBackup: String?, lastRestore: String?): String {
     return listOfNotNull(backup, restore).joinToString(" · ").ifBlank { "Drive or a local file" }
 }
 
-private fun messageScanSubtitle(enabled: Boolean, hour: Int, minute: Int): String {
+private fun messageScanSubtitle(
+    periodicEnabled: Boolean,
+    enabled: Boolean,
+    hour: Int,
+    minute: Int,
+): String {
     val reminder = if (enabled) {
         "Daily reminder ${com.kashvault.reminder.formatReminderClock(hour, minute)}"
     } else {
         "Daily reminder off"
     }
-    return "Keywords · $reminder"
+    val periodic = if (periodicEnabled) "Hourly scans on" else "Hourly scans off"
+    return "$periodic · $reminder"
 }
 
 private fun formatQuietTimestamp(value: String): String = value.trim().take(10)

@@ -15,7 +15,6 @@ import com.kashvault.auth.vaultAccountKey
 import com.kashvault.auth.OAuthTokens
 import com.kashvault.auth.StoredOAuth
 import com.kashvault.auth.humanizeGoogleSignInError
-import com.kashvault.auth.isValidVaultPin
 import com.kashvault.backup.BackupCancelledException
 import com.kashvault.backup.CloudBackupFile
 import com.kashvault.backup.DatabaseBackupException
@@ -30,6 +29,8 @@ import com.kashvault.backup.writeFileBytes
 import com.kashvault.inbox.CardBillMatch
 import com.kashvault.inbox.InboxCapture
 import com.kashvault.inbox.createInboxCapture
+import com.kashvault.lock.isDeviceAuthAvailable
+import com.kashvault.lock.requestDeviceAuth
 import com.kashvault.reminder.InboxReminderScheduler
 import com.kashvault.reminder.createInboxReminderScheduler
 import com.kashvault.reminder.formatReminderClock
@@ -153,47 +154,28 @@ class FinanceViewModel(
     private var snapshotEpoch = 0
     private var toastSeq = 0L
 
-    fun lockVault() {
-        if (_state.value.vaultLockEnabled) _vaultUnlocked.value = false
-    }
-
     fun unlockWithDevice() {
         _vaultUnlocked.value = true
         requestStartupPermissions()
     }
 
-    fun unlockVault(pin: String): Boolean {
-        if (!repository.verifyVaultPin(pin)) return false
-        _vaultUnlocked.value = true
-        requestStartupPermissions()
-        return true
-    }
-
-    fun setVaultPin(pin: String, confirm: String): Boolean {
-        if (pin != confirm || !isValidVaultPin(pin)) return false
-        repository.setVaultPin(pin)
-        patchState { it.copy(vaultLockEnabled = true) }
-        _vaultUnlocked.value = true
-        toast("App lock on")
-        return true
-    }
-
-    fun disableVaultLock(currentPin: String): Boolean {
-        if (!repository.verifyVaultPin(currentPin)) return false
-        repository.clearVaultPin()
-        patchState { it.copy(vaultLockEnabled = false) }
-        _vaultUnlocked.value = true
-        toast("App lock off")
-        return true
-    }
-
-    fun changeVaultPin(currentPin: String, nextPin: String, confirm: String): Boolean {
-        if (!repository.verifyVaultPin(currentPin)) return false
-        if (nextPin != confirm || !isValidVaultPin(nextPin)) return false
-        repository.setVaultPin(nextPin)
-        _vaultUnlocked.value = true
-        toast("PIN updated")
-        return true
+    fun setBiometricLockEnabled(enabled: Boolean) {
+        scope.launch {
+            if (enabled) {
+                if (!isDeviceAuthAvailable()) {
+                    toast("Enroll a biometric to enable app lock")
+                    return@launch
+                }
+                if (!requestDeviceAuth("Confirm biometric app lock")) {
+                    toast("Biometric confirmation was not completed")
+                    return@launch
+                }
+            }
+            repository.setBiometricLockEnabled(enabled)
+            patchState { it.copy(vaultLockEnabled = enabled) }
+            _vaultUnlocked.value = true
+            toast(if (enabled) "Biometric app lock on" else "App lock off")
+        }
     }
 
     private fun toast(message: String) {
@@ -316,6 +298,11 @@ class FinanceViewModel(
                 delay(600)
                 refreshInboxCapturePermissions()
                 reminderScheduler.scheduleDailyReminder(_state.value.inboxReminder)
+                if (!inboxCapture.schedulePeriodicSmsScan(_state.value.periodicSmsScanEnabled) &&
+                    _state.value.periodicSmsScanEnabled
+                ) {
+                    toast("Could not schedule periodic SMS scanning")
+                }
                 if (!_state.value.vaultLockEnabled) requestStartupPermissions()
             }
         }
@@ -336,11 +323,6 @@ class FinanceViewModel(
             }
             refreshInboxCapturePermissions()
         }
-    }
-
-    fun setUseDeviceLock(enabled: Boolean) {
-        repository.setUseDeviceLock(enabled)
-        refresh()
     }
 
     fun refresh() {
@@ -1103,6 +1085,34 @@ class FinanceViewModel(
 
     fun openInboxReminderNotificationSettings() = reminderScheduler.openNotificationSettings()
 
+    fun setPeriodicSmsScanEnabled(enabled: Boolean) {
+        scope.launch {
+            if (enabled && !inboxCapture.smsPermissionGranted()) {
+                if (!inboxCapture.requestSmsPermission()) {
+                    refreshInboxCapturePermissions()
+                    toast("SMS permission is required for hourly scans")
+                    return@launch
+                }
+            }
+            refreshInboxCapturePermissions()
+            val notificationsGranted = !enabled ||
+                reminderScheduler.notificationPermissionGranted() ||
+                reminderScheduler.requestNotificationPermission()
+            val scheduled = inboxCapture.schedulePeriodicSmsScan(enabled)
+            if (!scheduled) {
+                toast("Could not update the hourly SMS scan schedule")
+                return@launch
+            }
+            repository.setPeriodicSmsScanEnabled(enabled)
+            patchState { it.copy(periodicSmsScanEnabled = enabled) }
+            if (enabled && !notificationsGranted) {
+                toast("Hourly scans are on, but notifications are not allowed")
+            } else {
+                toast(if (enabled) "Hourly SMS scans on" else "Hourly SMS scans off")
+            }
+        }
+    }
+
     fun addCategory(name: String, icon: String, color: String, type: String, keywords: List<String>) {
         saveCategory(
             Category(
@@ -1702,6 +1712,10 @@ class FinanceViewModel(
                     refreshNow()
                     outcome
                 }
+                if (result.scanFailed) {
+                    inboxFeedback("Couldn’t scan SMS. Please try again.")
+                    return@launch
+                }
                 if (result.accessDenied) {
                     val retried = inboxCapture.requestSmsPermission()
                     refreshInboxCapturePermissions()
@@ -1719,6 +1733,10 @@ class FinanceViewModel(
                             outcome
                         }
                         if (!again.accessDenied) {
+                            if (again.scanFailed) {
+                                inboxFeedback("Couldn’t scan SMS. Please try again.")
+                                return@launch
+                            }
                             inboxFeedback(
                                 if (again.added == 0) "No new SMS payments found."
                                 else "Added ${again.added} SMS item(s) to the inbox.",
@@ -1804,6 +1822,7 @@ class FinanceViewModel(
                     suggestedCategoryId = categoryId ?: item.suggestedCategoryId,
                     suggestedSourceId = sourceId ?: item.suggestedSourceId,
                     note = note ?: item.note,
+                    status = Constants.INBOX_ACCEPTED,
                 ),
             )
         }
@@ -1822,7 +1841,12 @@ class FinanceViewModel(
         type: String? = null,
     ) {
         val hidden = _state.value.inboxItems.find { it.id == id }
-        val effectiveAmount = amount?.takeIf { it.isFinite() && it > 0 } ?: hidden?.amount
+        val suppliedAmount = amount?.takeIf { it.isFinite() && it > 0 }
+        if (hidden?.needsReview == true && suppliedAmount == null) {
+            inboxFeedback("Enter a verified amount before accepting this message.")
+            return
+        }
+        val effectiveAmount = suppliedAmount ?: hidden?.amount?.takeIf { it.isFinite() && it > 0 }
         repository.updateInboxSuggestion(id, categoryId, sourceId, note)
         if (!cardId.isNullOrBlank()) {
             val from = sourceId?.takeIf { it.isNotBlank() } ?: hidden?.suggestedSourceId
@@ -1902,7 +1926,7 @@ class FinanceViewModel(
                 repository.deleteExpense(undo.expenseId)
                 syncTransferDestinations(previous, null)
             }
-            repository.restoreInboxPending(undo.inboxId)
+            repository.restoreInboxPending(undo.inboxId, undo.item?.body)
         }
         undo.item?.let { restoreInboxInUi(it) }
         refreshNow()

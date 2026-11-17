@@ -5,7 +5,7 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -20,6 +20,7 @@ import com.kashvault.auth.DriveAuthorizationHost
 import com.kashvault.backup.BackupCancelledException
 import com.kashvault.backup.BackupDocumentHost
 import com.kashvault.inbox.InboxPermissionHost
+import com.kashvault.inbox.SmsScanWorkSchedulerHost
 import com.kashvault.profile.ImagePickerHost
 import com.kashvault.reminder.ACTION_OPEN_INBOX
 import com.kashvault.reminder.EXTRA_OPEN_INBOX
@@ -28,7 +29,7 @@ import com.kashvault.reminder.NotificationPermissionHost
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 
-class MainActivity : ComponentActivity(), BackupDocumentHost, DriveAuthorizationHost, InboxPermissionHost, NotificationPermissionHost, ImagePickerHost {
+class MainActivity : FragmentActivity(), BackupDocumentHost, DriveAuthorizationHost, InboxPermissionHost, NotificationPermissionHost, ImagePickerHost, SmsScanWorkSchedulerHost {
     private var pendingCreateBytes: ByteArray? = null
     private var pendingCreateResult: CompletableDeferred<Boolean>? = null
     private var pendingOpenResult: CompletableDeferred<ByteArray?>? = null
@@ -153,15 +154,6 @@ class MainActivity : ComponentActivity(), BackupDocumentHost, DriveAuthorization
         super.onDestroy()
     }
 
-    @Deprecated("Deprecated in Java")
-    @Suppress("DEPRECATION")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        when (requestCode) {
-            0xF001 -> com.kashvault.lock.DeviceAuthAndroid.complete(resultCode)
-        }
-    }
-
     override fun launchCreateDatabase(
         suggestedName: String,
         bytes: ByteArray,
@@ -209,6 +201,7 @@ class MainActivity : ComponentActivity(), BackupDocumentHost, DriveAuthorization
             result.complete(true)
             return
         }
+
         if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
             pendingNotificationResult = null
             result.complete(true)
@@ -216,6 +209,10 @@ class MainActivity : ComponentActivity(), BackupDocumentHost, DriveAuthorization
         }
         pendingNotificationResult = result
         notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    override fun setPeriodicSmsScanEnabled(enabled: Boolean) {
+        com.kashvault.sms.PeriodicSmsScanScheduler.setEnabled(applicationContext, enabled)
     }
 
     private fun openInboxIfRequested(intent: Intent?) {

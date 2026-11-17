@@ -7,11 +7,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.Cursor
-import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.provider.Telephony
 import android.service.notification.NotificationListenerService
+import android.util.Log
 import com.kashvault.auth.AndroidAppContext
 import com.kashvault.data.FinanceRepository
 import com.kashvault.db.DatabaseDriverFactory
@@ -38,7 +38,8 @@ fun ingestAndroidInbox(
         val capturedAt = capturedAtMs?.let { Instant.fromEpochMilliseconds(it).toString() }
             ?: kotlinx.datetime.Clock.System.now().toString()
         repo.ingestCapturedMessage(channel, sender, body, capturedAt) != null
-    } catch (_: Exception) {
+    } catch (error: Exception) {
+        Log.e("KashVaultInbox", "Failed to ingest captured message", error)
         false
     }
 }
@@ -108,69 +109,89 @@ private class AndroidInboxCapture : InboxCapture {
     }
 
     override fun scanRecentSms(onProgress: (SmsScanProgress) -> Unit): SmsScanResult {
-        val context = AndroidAppContext.appContext ?: return SmsScanResult()
-        if (!smsPermissionGranted()) return SmsScanResult(accessDenied = true)
-        val cutoff = System.currentTimeMillis() - 14L * 24 * 60 * 60 * 1000
-        return try {
-            val uris = listOf(Telephony.Sms.Inbox.CONTENT_URI, Telephony.Sms.CONTENT_URI)
-            for (uri in uris) {
-                val added = scanSmsUri(context, uri, cutoff, onProgress)
-                if (added != null) return SmsScanResult(added = added)
-            }
-            SmsScanResult()
-        } catch (_: SecurityException) {
-            SmsScanResult(accessDenied = true)
-        } catch (_: Exception) {
-            SmsScanResult()
-        }
+        val context = AndroidAppContext.appContext ?: return SmsScanResult(scanFailed = true)
+        return scanAndroidSms(context, sinceEpochMs = null, onProgress = onProgress)
     }
 
-    private fun scanSmsUri(
-        context: Context,
-        uri: Uri,
-        cutoff: Long,
-        onProgress: (SmsScanProgress) -> Unit,
-    ): Int? {
-        val cursor = context.contentResolver.query(
-            uri,
+    override fun schedulePeriodicSmsScan(enabled: Boolean): Boolean {
+        val host = AndroidAppContext.activity as? SmsScanWorkSchedulerHost ?: return false
+        host.setPeriodicSmsScanEnabled(enabled)
+        return true
+    }
+}
+
+fun scanAndroidSms(
+    context: Context,
+    sinceEpochMs: Long?,
+    onProgress: (SmsScanProgress) -> Unit = {},
+): SmsScanResult {
+    val app = context.applicationContext
+    if (app.checkSelfPermission(Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) {
+        return SmsScanResult(accessDenied = true)
+    }
+    val repo = FinanceRepository(DatabaseDriverFactory(app))
+    return try {
+        repo.ensureReady()
+        val rules = repo.getInboxScanRules()
+        val cutoff = sinceEpochMs?.let { (it - SMS_SCAN_OVERLAP_MS).coerceAtLeast(0L) }
+        val selection = cutoff?.let { "${Telephony.Sms.DATE} >= ?" }
+        val selectionArgs = cutoff?.let { arrayOf(it.toString()) }
+        val cursor = app.contentResolver.query(
+            Telephony.Sms.Inbox.CONTENT_URI,
             arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE),
-            "${Telephony.Sms.DATE} >= ?",
-            arrayOf(cutoff.toString()),
-            "${Telephony.Sms.DATE} DESC LIMIT 250",
-        ) ?: return null
-        val repo = FinanceRepository(DatabaseDriverFactory(context.applicationContext))
-        val keywords = repo.getSmsScanKeywords()
+            selection,
+            selectionArgs,
+            "${Telephony.Sms.DATE} ASC",
+        ) ?: return SmsScanResult(scanFailed = true)
+        var scanned = 0
         var added = 0
+        var reportedAdded = 0
         cursor.use { rows ->
             val senderIdx = columnIndex(rows, Telephony.Sms.ADDRESS, "address")
             val bodyIdx = columnIndex(rows, Telephony.Sms.BODY, "body")
             val dateIdx = columnIndex(rows, Telephony.Sms.DATE, "date")
-            if (bodyIdx < 0) return 0
-            var scanned = 0
-            while (rows.moveToNext() && scanned < 250) {
+            if (bodyIdx < 0 || dateIdx < 0) return SmsScanResult(scanFailed = true)
+            while (rows.moveToNext()) {
                 scanned += 1
                 val sender = if (senderIdx >= 0) rows.getString(senderIdx).orEmpty() else ""
                 val body = rows.getString(bodyIdx).orEmpty()
-                val date = if (dateIdx >= 0) rows.getLong(dateIdx) else 0L
-                if (!messageContainsScanKeyword(sender, body, keywords)) continue
-                val capturedAt = Instant.fromEpochMilliseconds(date).toString()
-                if (repo.ingestCapturedMessage(Constants.INBOX_SMS, sender, body, capturedAt) != null) {
+                if (!rules.matches(sender, body)) continue
+                val capturedAt = Instant.fromEpochMilliseconds(rows.getLong(dateIdx)).toString()
+                if (repo.ingestCapturedMessage(
+                        Constants.INBOX_SMS,
+                        sender,
+                        body,
+                        capturedAt,
+                        scanRules = rules,
+                    ) != null
+                ) {
                     added += 1
+                }
+                if (scanned % 50 == 0 || added != reportedAdded) {
                     onProgress(SmsScanProgress(scanned = scanned, added = added))
+                    reportedAdded = added
                 }
             }
         }
-        return added
+        repo.setLastSmsScanAtEpochMs(System.currentTimeMillis())
+        SmsScanResult(added = added)
+    } catch (_: SecurityException) {
+        SmsScanResult(accessDenied = true)
+    } catch (error: Exception) {
+        Log.e("KashVaultInbox", "SMS provider scan failed", error)
+        SmsScanResult(scanFailed = true)
     }
-
-    private fun columnIndex(cursor: Cursor, vararg names: String): Int {
-        names.forEach { name ->
-            val index = cursor.getColumnIndex(name)
-            if (index >= 0) return index
-        }
-        return -1
-    }
-
-    private fun listenerComponent(context: Context): ComponentName =
-        ComponentName(context.packageName, LISTENER_CLASS)
 }
+
+private const val SMS_SCAN_OVERLAP_MS = 24L * 60 * 60 * 1000
+
+private fun columnIndex(cursor: Cursor, vararg names: String): Int {
+    names.forEach { name ->
+        val index = cursor.getColumnIndex(name)
+        if (index >= 0) return index
+    }
+    return -1
+}
+
+private fun listenerComponent(context: Context): ComponentName =
+    ComponentName(context.packageName, LISTENER_CLASS)

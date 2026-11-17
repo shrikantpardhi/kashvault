@@ -149,6 +149,7 @@ object InboxScreen : Screen {
         val chipOptions = listOf(
             "all" to "All",
             "pending" to "Pending",
+            "review" to "Needs review",
             "upi" to "UPI",
             "food" to "Food",
             "grocery" to "Grocery",
@@ -376,8 +377,13 @@ private fun SwipeInboxRow(
             when (value) {
                 SwipeToDismissBoxValue.StartToEnd -> {
                     platformHapticTick()
-                    acceptAction()
-                    true
+                    if (item.needsReview) {
+                        onOpen()
+                        false
+                    } else {
+                        acceptAction()
+                        true
+                    }
                 }
                 SwipeToDismissBoxValue.EndToStart -> {
                     platformHapticTick()
@@ -543,6 +549,13 @@ private fun CompactInboxCard(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
+                        if (item.needsReview) {
+                            SoftChip(
+                                "Needs review",
+                                container = MaterialTheme.colorScheme.errorContainer,
+                                content = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                        }
                         SoftChip(
                             categoryName,
                             container = MaterialTheme.colorScheme.primaryContainer,
@@ -570,7 +583,15 @@ private fun CompactInboxCard(
                         )
                     }
                 }
-                MoneyText(item.amount, type = item.type, style = MaterialTheme.typography.titleSmall)
+                if (item.needsReview) {
+                    Text(
+                        "Needs review",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                } else {
+                    MoneyText(item.amount, type = item.type, style = MaterialTheme.typography.titleSmall)
+                }
             }
         }
     }
@@ -601,7 +622,13 @@ private fun InboxAdjustSheet(
 ) {
     var selectedType by remember(item.id) { mutableStateOf(item.type) }
     var amountText by remember(item.id) {
-        mutableStateOf(if (item.amount % 1.0 == 0.0) item.amount.toLong().toString() else item.amount.toString())
+        mutableStateOf(
+            if (item.needsReview) "" else if (item.amount % 1.0 == 0.0) {
+                item.amount.toLong().toString()
+            } else {
+                item.amount.toString()
+            },
+        )
     }
     val typedCategories = categories.filter { category ->
         val categoryType = category.type ?: "expense"
@@ -624,6 +651,7 @@ private fun InboxAdjustSheet(
     var applyDue by remember(item.id) { mutableStateOf(dueMatchTitle != null) }
     var applyCardBill by remember(item.id) { mutableStateOf(cardBillTitle != null) }
     var showFullMessage by remember(item.id) { mutableStateOf(false) }
+    var amountError by remember(item.id) { mutableStateOf(false) }
     val selectedCategory = typedCategories.find { it.id == categoryId } ?: typedCategories.firstOrNull()
     val paySources = if (applyCardBill && cardBillTitle != null && banks.isNotEmpty()) banks else banks + cards
     val selectedSource = paySources.find { it.id == sourceId } ?: (banks + cards).find { it.id == sourceId }
@@ -644,7 +672,10 @@ private fun InboxAdjustSheet(
                 .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(item.sender.ifBlank { "Payment" }, style = MaterialTheme.typography.titleLarge)
+            Text(
+                if (item.needsReview) "Needs review · ${item.sender.ifBlank { "Message" }}" else item.sender.ifBlank { "Payment" },
+                style = MaterialTheme.typography.titleLarge,
+            )
             
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -672,8 +703,17 @@ private fun InboxAdjustSheet(
 
             VaultOutlinedTextField(
                 value = amountText,
-                onValueChange = { amountText = it },
+                onValueChange = {
+                    amountText = it
+                    amountError = false
+                },
                 label = { Text("Verified Amount (${com.kashvault.domain.Constants.RUPEE_SIGN})") },
+                isError = amountError,
+                supportingText = if (amountError) {
+                    { Text("Enter a valid amount greater than zero.") }
+                } else {
+                    null
+                },
                 modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal,
@@ -810,21 +850,28 @@ private fun InboxAdjustSheet(
                     label = { Text("This is $dueMatchTitle") },
                 )
             }
-            val parsedAmount = com.kashvault.util.parseMoneyInput(amountText).takeIf { it.isFinite() && it > 0 } ?: item.amount
+            val parsedAmount = com.kashvault.util.parseMoneyInput(amountText)
+                .takeIf { it.isFinite() && it > 0 }
+                ?: item.amount.takeIf { it.isFinite() && it > 0 }
             PrimaryButton(
-                text = "Accept ${formatINR(parsedAmount)}",
+                text = parsedAmount?.let { "Accept ${formatINR(it)}" } ?: "Enter amount to accept",
                 onClick = {
-                    clicks("accept") {
-                        onAccept(
-                            categoryId,
-                            sourceId,
-                            note.ifBlank { null },
-                            timestampOnDate(date),
-                            applyDue,
-                            applyCardBill && cardBillTitle != null,
-                            parsedAmount,
-                            selectedType,
-                        )
+                    if (parsedAmount == null) {
+                        amountError = true
+                    } else {
+                        amountError = false
+                        clicks("accept") {
+                            onAccept(
+                                categoryId,
+                                sourceId,
+                                note.ifBlank { null },
+                                timestampOnDate(date),
+                                applyDue,
+                                applyCardBill && cardBillTitle != null,
+                                parsedAmount,
+                                selectedType,
+                            )
+                        }
                     }
                 },
             )

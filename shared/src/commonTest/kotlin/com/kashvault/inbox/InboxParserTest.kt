@@ -112,6 +112,54 @@ class InboxParserTest {
     }
 
     @Test
+    fun scanRulesAlsoMatchCategoryAndPaymentSourceTags() {
+        val rules = InboxScanRules(
+            keywords = listOf("debited"),
+            categories = listOf(food),
+            sources = listOf(hdfc),
+        )
+
+        assertTrue(rules.matches("BANK", "Payment at SWIGGY"))
+        assertTrue(rules.matches("BANK", "HDFC account alert"))
+        assertFalse(rules.matches("BANK", "Your OTP is 123456"))
+
+        val tags = rules.tagsFor("BANK", "Payment at SWIGGY using HDFC")
+        assertEquals("cat_food", tags.categoryId)
+        assertEquals("swiggy", tags.categoryTag)
+        assertEquals("src_hdfc", tags.sourceId)
+        assertEquals("hdfc", tags.sourceTag)
+    }
+
+    @Test
+    fun unparsedInboxItemsRequireAValidAmountAndAreNotLearnedWhenDismissed() {
+        val reviewItem = InboxItem(
+            id = "review",
+            capturedAt = "2026-08-19T10:00:00Z",
+            channel = Constants.INBOX_SMS,
+            sender = "HDFCBK",
+            body = "Payment at SWIGGY",
+            amount = 0.0,
+            type = "expense",
+            suggestedCategoryId = "cat_food",
+            suggestedSourceId = null,
+            note = null,
+            status = Constants.INBOX_PENDING,
+            fingerprint = inboxFingerprint("Payment at SWIGGY"),
+            needsReview = true,
+        )
+
+        assertNull(resolvedInboxAmount(reviewItem, null))
+        assertNull(resolvedInboxAmount(reviewItem, 0.0))
+        assertEquals(249.0, resolvedInboxAmount(reviewItem, 249.0))
+        assertFalse(shouldLearnFromInboxItem(reviewItem))
+        assertFalse(shouldLearnFromInboxItem(reviewItem.copy(status = Constants.INBOX_DISMISSED)))
+        assertTrue(shouldLearnFromInboxItem(reviewItem.copy(status = Constants.INBOX_ACCEPTED)))
+        assertTrue(inboxItemDedupKeys(reviewItem).none { it.startsWith("sem:") })
+        assertTrue(shouldRecoverUnparsedInboxMessage(null, alreadyHasInboxItem = false))
+        assertFalse(shouldRecoverUnparsedInboxMessage(null, alreadyHasInboxItem = true))
+    }
+
+    @Test
     fun fingerprintIgnoresChannelSenderCaseAndPunctuation() {
         val sms = "Rs.500.00 debited from a/c XX4321 at SWIGGY."
         assertEquals(
