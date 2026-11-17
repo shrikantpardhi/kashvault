@@ -1842,10 +1842,6 @@ class FinanceViewModel(
     ) {
         val hidden = _state.value.inboxItems.find { it.id == id }
         val suppliedAmount = amount?.takeIf { it.isFinite() && it > 0 }
-        if (hidden?.needsReview == true && suppliedAmount == null) {
-            inboxFeedback("Enter a verified amount before accepting this message.")
-            return
-        }
         val effectiveAmount = suppliedAmount ?: hidden?.amount?.takeIf { it.isFinite() && it > 0 }
         repository.updateInboxSuggestion(id, categoryId, sourceId, note)
         if (!cardId.isNullOrBlank()) {
@@ -1915,6 +1911,16 @@ class FinanceViewModel(
         val hidden = removeInboxFromUi(id)
         repository.dismissInboxItem(id)
         toastUndo("Dismissed", InboxUndoAction(inboxId = id, item = hidden))
+    }
+
+    fun dismissAllInbox() = writeOnce("dismissAllInbox") {
+        runCatching {
+            val dismissedCount = repository.dismissAllPendingInbox()
+            patchState { it.copy(inboxItems = emptyList()) }
+            if (dismissedCount > 0) toast("Dismissed $dismissedCount inbox items")
+        }.onFailure {
+            toast("Could not dismiss inbox items")
+        }
     }
 
     private fun undoInboxAction(undo: InboxUndoAction) {

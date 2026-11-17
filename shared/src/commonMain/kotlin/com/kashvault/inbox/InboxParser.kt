@@ -330,8 +330,8 @@ fun inboxItemDedupKeys(item: InboxItem): List<String> =
     inboxDedupKeys(
         sender = item.sender,
         body = item.body,
-        amount = item.amount.takeUnless { item.needsReview },
-        type = item.type.takeUnless { item.needsReview },
+        amount = item.amount,
+        type = item.type,
         capturedAt = item.capturedAt,
         merchant = inboxMerchantHint(item.body, item.note, item.matchedCategoryTag, item.sender),
         existingFingerprint = item.fingerprint,
@@ -1324,7 +1324,6 @@ fun inboxCaptureReason(
 }
 
 fun inboxAlreadyInHistory(item: InboxItem, expenses: List<Expense>): Boolean {
-    if (item.needsReview) return false
     val merchant = inboxMerchantHint(item.body, item.note, item.matchedCategoryTag, item.sender)
     return expenses.any { expenseMatchesInboxPurchase(it, item.amount, item.type, item.capturedAt, merchant) }
 }
@@ -1360,14 +1359,8 @@ fun shouldLearnFromInboxItem(item: InboxItem): Boolean =
 
 fun resolvedInboxAmount(item: InboxItem, proposedAmount: Double?): Double? {
     val proposed = proposedAmount?.takeIf { it.isFinite() && it > 0 }
-    if (item.needsReview) return proposed
     return proposed ?: item.amount.takeIf { it.isFinite() && it > 0 }
 }
-
-fun shouldRecoverUnparsedInboxMessage(
-    parsed: ParsedInbox?,
-    alreadyHasInboxItem: Boolean,
-): Boolean = parsed == null && !alreadyHasInboxItem
 
 fun learnedSourceKeywords(source: PaymentSource, item: InboxItem): List<String>? {
     val tag = item.matchedSourceTag?.trim().orEmpty()
@@ -1411,7 +1404,6 @@ fun inboxFilterMatches(
     val catHay = "${category?.name.orEmpty()} ${category?.keywords.orEmpty().joinToString()}".lowercase()
     return when (filter) {
         "pending" -> item.status == Constants.INBOX_PENDING
-        "review" -> item.needsReview
         "shopping" -> "shopping" in badge || "shop" in haystack || "shop" in catHay ||
             listOf("amazon", "flipkart", "myntra").any { it in haystack }
         "food" -> "food" in badge || listOf("swiggy", "zomato", "eats", "restaurant").any { it in haystack }

@@ -283,6 +283,12 @@ INSERT OR REPLACE INTO inbox_items (
 updateInboxStatus:
 UPDATE inbox_items SET status = ? WHERE id = ?;
 
+dismissAllPendingInbox:
+UPDATE inbox_items SET status = 'dismissed', body = '' WHERE status = 'pending';
+
+dismissPendingReviewInbox:
+UPDATE inbox_items SET status = 'dismissed', body = '' WHERE status = 'pending' AND needs_review = 1;
+
 restoreInboxPending:
 UPDATE inbox_items SET status = 'pending', body = COALESCE(?, body) WHERE id = ?;
 

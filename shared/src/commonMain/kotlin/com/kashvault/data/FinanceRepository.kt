@@ -22,6 +22,7 @@ import com.kashvault.inbox.duplicateInboxIdsToRemove
 import com.kashvault.inbox.expenseMatchesInboxPurchase
 import com.kashvault.inbox.inboxDedupKeys
 import com.kashvault.inbox.inboxItemDedupKeys
+import com.kashvault.inbox.inboxLookupKeys
 import com.kashvault.inbox.inboxMerchantHint
 import com.kashvault.inbox.merchantQuality
 import com.kashvault.inbox.learnedCategoryKeywords
@@ -29,7 +30,6 @@ import com.kashvault.inbox.learnedSourceKeywords
 import com.kashvault.inbox.parseInboxMessage
 import com.kashvault.inbox.resolvedInboxAmount
 import com.kashvault.inbox.shouldLearnFromInboxItem
-import com.kashvault.inbox.shouldRecoverUnparsedInboxMessage
 import com.kashvault.reminder.parseInboxReminderSettings
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
@@ -707,52 +707,50 @@ class FinanceRepository(private val driverFactory: DatabaseDriverFactory) {
             !rules.matches(sender, trimmed)
         ) return@withDb null
         val parsed = parseInboxMessage(trimmed, sender, categories, sources)
+        if (parsed == null) {
+            markInboxSeen(inboxLookupKeys(sender, trimmed), capturedAt)
+            return@withDb null
+        }
         val matchedTags = rules.tagsFor(sender, trimmed)
-        val merchant = parsed?.let {
-            inboxMerchantHint(trimmed, it.note, it.matchedCategoryTag, sender)
-        } ?: inboxMerchantHint(trimmed, sender = sender)
+        val merchant = inboxMerchantHint(trimmed, parsed.note, parsed.matchedCategoryTag, sender)
         val keys = inboxDedupKeys(
             sender = sender,
             body = trimmed,
-            amount = parsed?.amount,
-            type = parsed?.type,
+            amount = parsed.amount,
+            type = parsed.type,
             capturedAt = capturedAt,
             merchant = merchant,
         )
         if (keys.isEmpty()) return@withDb null
         val alreadyHasInboxItem = hasInboxItem(keys)
         if (alreadyHasInboxItem) return@withDb null
-        if (hasSeenInbox(keys) && !shouldRecoverUnparsedInboxMessage(parsed, alreadyHasInboxItem)) {
+        if (hasSeenInbox(keys)) return@withDb null
+        val existingInbox = bestInboxDuplicate(
+            amount = parsed.amount,
+            type = parsed.type,
+            capturedAt = capturedAt,
+            merchant = merchant,
+            candidates = database.kashVaultQueries.selectAllInboxItems().executeAsList().map { it.toDomain() },
+        )
+        val alreadyBooked = existingInbox?.status == Constants.INBOX_ACCEPTED ||
+            database.kashVaultQueries.selectAllExpenses().executeAsList().map { it.toDomain() }
+                .any { expenseMatchesInboxPurchase(it, parsed.amount, parsed.type, capturedAt, merchant) }
+        if (alreadyBooked) {
+            markInboxSeen(keys, capturedAt)
             return@withDb null
         }
-        if (parsed != null) {
-            val existingInbox = bestInboxDuplicate(
-                amount = parsed.amount,
-                type = parsed.type,
-                capturedAt = capturedAt,
-                merchant = merchant,
-                candidates = database.kashVaultQueries.selectAllInboxItems().executeAsList().map { it.toDomain() },
+        if (existingInbox != null && existingInbox.status == Constants.INBOX_PENDING) {
+            val existingMerchant = inboxMerchantHint(
+                existingInbox.body,
+                existingInbox.note,
+                existingInbox.matchedCategoryTag,
+                existingInbox.sender,
             )
-            val alreadyBooked = existingInbox?.status == Constants.INBOX_ACCEPTED ||
-                database.kashVaultQueries.selectAllExpenses().executeAsList().map { it.toDomain() }
-                    .any { expenseMatchesInboxPurchase(it, parsed.amount, parsed.type, capturedAt, merchant) }
-            if (alreadyBooked) {
+            if (merchantQuality(merchant) > merchantQuality(existingMerchant)) {
+                database.kashVaultQueries.deleteInboxItem(existingInbox.id)
+            } else {
                 markInboxSeen(keys, capturedAt)
                 return@withDb null
-            }
-            if (existingInbox != null && existingInbox.status == Constants.INBOX_PENDING) {
-                val existingMerchant = inboxMerchantHint(
-                    existingInbox.body,
-                    existingInbox.note,
-                    existingInbox.matchedCategoryTag,
-                    existingInbox.sender,
-                )
-                if (merchantQuality(merchant) > merchantQuality(existingMerchant)) {
-                    database.kashVaultQueries.deleteInboxItem(existingInbox.id)
-                } else {
-                    markInboxSeen(keys, capturedAt)
-                    return@withDb null
-                }
             }
         }
         val item = InboxItem(
@@ -761,16 +759,15 @@ class FinanceRepository(private val driverFactory: DatabaseDriverFactory) {
             channel = channel,
             sender = sender,
             body = trimmed,
-            amount = parsed?.amount ?: 0.0,
-            type = parsed?.type ?: "expense",
-            suggestedCategoryId = parsed?.categoryId ?: matchedTags.categoryId,
-            suggestedSourceId = parsed?.sourceId ?: matchedTags.sourceId,
-            note = parsed?.note,
+            amount = parsed.amount,
+            type = parsed.type,
+            suggestedCategoryId = parsed.categoryId ?: matchedTags.categoryId,
+            suggestedSourceId = parsed.sourceId ?: matchedTags.sourceId,
+            note = parsed.note,
             status = Constants.INBOX_PENDING,
             fingerprint = keys.first(),
-            matchedCategoryTag = parsed?.matchedCategoryTag ?: matchedTags.categoryTag,
-            matchedSourceTag = parsed?.matchedSourceTag ?: matchedTags.sourceTag,
-            needsReview = parsed == null,
+            matchedCategoryTag = parsed.matchedCategoryTag ?: matchedTags.categoryTag,
+            matchedSourceTag = parsed.matchedSourceTag ?: matchedTags.sourceTag,
         )
         database.transaction {
             persistInbox(item)
@@ -832,6 +829,15 @@ class FinanceRepository(private val driverFactory: DatabaseDriverFactory) {
     fun dismissInboxItem(id: String) {
         database.kashVaultQueries.updateInboxStatus(Constants.INBOX_DISMISSED, id)
         database.kashVaultQueries.clearInboxBody(id)
+    }
+
+    fun dismissAllPendingInbox(): Int = withDb {
+        var count = 0
+        database.transaction {
+            count = database.kashVaultQueries.countPendingInbox().executeAsOne().toInt()
+            database.kashVaultQueries.dismissAllPendingInbox()
+        }
+        count
     }
 
     fun restoreInboxPending(id: String, body: String? = null) {
@@ -1177,6 +1183,7 @@ class FinanceRepository(private val driverFactory: DatabaseDriverFactory) {
                 }
             }
         }
+        database.kashVaultQueries.dismissPendingReviewInbox()
         isInitialized = true
     }
 
