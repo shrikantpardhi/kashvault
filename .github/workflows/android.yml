@@ -17,5 +17,7 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
+      - name: Create Gradle properties from safe template
+        run: cp gradle.properties.example gradle.properties
       - name: Run shared tests and assemble Android debug APK
-        run: bash gradlew :shared:testDebugUnitTest :app:assembleDebug
+        run: bash gradlew "-Pandroid.useAndroidX=true" :shared:testDebugUnitTest :app:assembleDebug

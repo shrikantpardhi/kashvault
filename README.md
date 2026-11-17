@@ -77,9 +77,11 @@ KashVault has **no backend server**. The phone talks only to Google (Sign-In, to
 3. Set the Web client ID in Gradle (do not put it on the login screen):
 
 ```properties
-# gradle.properties
+# Copy gradle.properties.example to gradle.properties, then set:
 GOOGLE_WEB_CLIENT_ID=your-web-client-id.apps.googleusercontent.com
 ```
+
+`gradle.properties` is local-only and ignored by Git. Do not commit it.
 
 **Continue without Google** keeps a fully offline vault. Gemini uses an API key stored in Profile on the device.
 

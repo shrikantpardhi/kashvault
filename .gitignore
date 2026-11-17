@@ -4,6 +4,7 @@
 .idea/
 *.iml
 local.properties
+gradle.properties
 keystore.properties
 keystore/
 *.jks
